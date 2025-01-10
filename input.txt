@@ -1,0 +1,111 @@
+1. GET /api/taxpayers
+Purpose: Fetches the list of all tax payers.
+Response Example:
+json
+Copy code
+{
+  "taxpayers": [
+    {
+      "TaxPayerID": 1,
+      "Name": "John Doe",
+      "Email": "john.doe@example.com",
+      "Phone": "123-456-7890",
+      "Address": "123 Elm Street, Springfield",
+      "TaxIdentificationNumber": "TIN123456789"
+    },
+    {
+      "TaxPayerID": 2,
+      "Name": "Jane Smith",
+      "Email": "jane.smith@example.com",
+      "Phone": "987-654-3210",
+      "Address": "456 Oak Street, Springfield",
+      "TaxIdentificationNumber": "TIN987654321"
+    }
+  ]
+}
+2. GET /api/taxreturns
+Purpose: Fetches the tax returns for each tax payer.
+Response Example:
+json
+Copy code
+{
+  "tax_returns": [
+    {
+      "ReturnID": 101,
+      "TaxPayerName": "John Doe",
+      "TotalIncome": 50000,
+      "TaxableIncome": 45000,
+      "TaxAmount": 7500,
+      "Status": "Filed"
+    },
+    {
+      "ReturnID": 102,
+      "TaxPayerName": "Jane Smith",
+      "TotalIncome": 70000,
+      "TaxableIncome": 65000,
+      "TaxAmount": 10500,
+      "Status": "Filed"
+    }
+  ]
+}
+3. POST /api/taxreturn - Filing a Tax Return
+Purpose: Allows a user to file a tax return for a tax payer.
+Input Data (JSON):
+json
+Copy code
+{
+  "tax_payer_id": 1,
+  "total_income": 50000
+}
+Response Example:
+json
+Copy code
+{
+  "message": "Tax return filed successfully"
+}
+4. GET /api/taxconsultants
+Purpose: Fetches the list of all tax consultants.
+Response Example:
+json
+Copy code
+{
+  "consultants": [
+    {
+      "ConsultantID": 1,
+      "Name": "Alice Brown",
+      "Email": "alice.brown@example.com",
+      "Phone": "123-789-4560",
+      "Expertise": "Corporate Tax"
+    },
+    {
+      "ConsultantID": 2,
+      "Name": "Bob Green",
+      "Email": "bob.green@example.com",
+      "Phone": "321-654-9870",
+      "Expertise": "Individual Tax"
+    }
+  ]
+}
+5. POST /api/assignconsultant - Assigning a Consultant to a Taxpayer
+Purpose: Assigns a tax consultant to a taxpayer.
+Input Data (JSON):
+json
+Copy code
+{
+  "tax_payer_id": 1,
+  "consultant_id": 2
+}
+Response Example:
+json
+Copy code
+{
+  "message": "Consultant assigned successfully"
+}
+6. GET /api/taxstatistics
+Purpose: Calls the procedure to show tax statistics (may show stats in DBMS output or logs).
+Response Example:
+json
+Copy code
+{
+  "message": "Tax statistics shown in DBMS Output"
+}
