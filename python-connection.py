@@ -1,163 +1,184 @@
-import os
-import oracledb
-from flask import Flask, jsonify, request
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import mysql.connector
+from datetime import date, datetime
+from decimal import Decimal
+import socket
 
-app = Flask(__name__)
+# MySQL database configuration
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "root",
+    "password": "root",
+    "database": "Tax"  # Change this to your actual database name
+}
 
-dsn = os.getenv('DB_DSN', oracledb.makedsn("172.14.7.160", 1521, service_name="XE"))
-db_user = os.getenv('DB_USER', 'root')
-db_password = os.getenv('DB_PASSWORD', 'root')
+def get_db_connection():
+    """Get a MySQL database connection."""
+    return mysql.connector.connect(**DB_CONFIG)
 
-def create_connection():
-    try:
-        connection = oracledb.connect(user=db_user, password=db_password, dsn=dsn)
-        return connection
-    except oracledb.DatabaseError as e:
-        error_obj, = e.args
-        print(f"Error connecting to Oracle DB: {error_obj.message}")
-        return None
+class CustomJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle date, datetime, and Decimal types."""
+    def default(self, obj):
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()  
+        if isinstance(obj, Decimal):
+            return float(obj)  
+        return super().default(obj)
 
-@app.route('/api/taxpayers', methods=['GET'])
-def get_taxpayers():
-    try:
-        connection = create_connection()
-        if connection is None:
-            return jsonify({"error": "Database connection failed"}), 500
-        
-        cursor = connection.cursor()
-        cursor.execute("SELECT TaxPayerID, Name, Email, Phone, Address, TaxIdentificationNumber FROM TaxPayers")
-        
-        taxpayers = [{'TaxPayerID': row[0], 'Name': row[1], 'Email': row[2], 'Phone': row[3], 'Address': row[4], 'TaxIdentificationNumber': row[5]} for row in cursor.fetchall()]
-        cursor.close()
-        connection.close()
+class RequestHandler(BaseHTTPRequestHandler):
+    """RequestHandler to process GET and POST requests."""
+    
+    def do_GET(self):
+        """Handle GET requests."""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            if self.path.startswith("/taxpayers/"):
+                taxpayer_id = self.path.split("/")[-1]
+                cursor.execute("SELECT * FROM TaxPayers WHERE TaxPayerID = %s", (taxpayer_id,))
+                result = cursor.fetchone()
+            elif self.path.startswith("/taxrates/"):
+                cursor.execute("SELECT * FROM TaxRates")
+                result = cursor.fetchall()
+            elif self.path.startswith("/taxreturns/"):
+                return_id = self.path.split("/")[-1]
+                cursor.execute("SELECT * FROM TaxReturns WHERE TaxReturnID = %s", (return_id,))
+                result = cursor.fetchone()
+            elif self.path.startswith("/deductions/"):
+                deduction_id = self.path.split("/")[-1]
+                cursor.execute("SELECT * FROM Deductions WHERE DeductionID = %s", (deduction_id,))
+                result = cursor.fetchone()
+            elif self.path.startswith("/penalties/"):
+                penalty_id = self.path.split("/")[-1]
+                cursor.execute("SELECT * FROM Penalties WHERE PenaltyID = %s", (penalty_id,))
+                result = cursor.fetchone()
+            elif self.path.startswith("/taxconsultants/"):
+                consultant_id = self.path.split("/")[-1]
+                cursor.execute("SELECT * FROM TaxConsultants WHERE ConsultantID = %s", (consultant_id,))
+                result = cursor.fetchone()
+            elif self.path.startswith("/taxconsultantassignments/"):
+                assignment_id = self.path.split("/")[-1]
+                cursor.execute("SELECT * FROM TaxConsultantAssignments WHERE AssignmentID = %s", (assignment_id,))
+                result = cursor.fetchone()
+            else:
+                cursor.execute("SELECT * FROM TaxPayers")  # Default to fetching all taxpayers
+                result = cursor.fetchall()
 
-        return jsonify({"taxpayers": taxpayers})
-    except oracledb.DatabaseError as e:
-        error_obj, = e.args
-        return jsonify({"error": error_obj.message}), 500
-
-@app.route('/api/taxreturns', methods=['GET'])
-def get_tax_returns():
-    try:
-        connection = create_connection()
-        if connection is None:
-            return jsonify({"error": "Database connection failed"}), 500
-        
-        cursor = connection.cursor()
-        cursor.execute("""
-            SELECT tr.ReturnID, tp.Name, tr.TotalIncome, tr.TaxableIncome, tr.TaxAmount, tr.Status 
-            FROM TaxReturns tr
-            JOIN TaxPayers tp ON tr.TaxPayerID = tp.TaxPayerID
-        """)
-        
-        tax_returns = [{'ReturnID': row[0], 'TaxPayerName': row[1], 'TotalIncome': row[2], 'TaxableIncome': row[3], 'TaxAmount': row[4], 'Status': row[5]} for row in cursor.fetchall()]
-        cursor.close()
-        connection.close()
-
-        return jsonify({"tax_returns": tax_returns})
-    except oracledb.DatabaseError as e:
-        error_obj, = e.args
-        return jsonify({"error": error_obj.message}), 500
-
-@app.route('/api/taxreturn', methods=['POST'])
-def file_tax_return():
-    data = request.get_json()
-    tax_payer_id = data.get('tax_payer_id')
-    total_income = data.get('total_income')
-
-    if not tax_payer_id or not total_income:
-        return jsonify({"error": "TaxPayerID and TotalIncome are required"}), 400
-
-    try:
-        connection = create_connection()
-        if connection is None:
-            return jsonify({"error": "Database connection failed"}), 500
-        
-        cursor = connection.cursor()
-
-        cursor.callproc("FileTaxReturn", [tax_payer_id, total_income])
-        connection.commit()
-
-        return jsonify({"message": "Tax return filed successfully"}), 201
-    except oracledb.DatabaseError as e:
-        error_obj, = e.args
-        return jsonify({"error": error_obj.message}), 500
-    finally:
-        if cursor:
+            response_body = json.dumps(result, cls=CustomJSONEncoder)
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(response_body.encode())
+        except Exception as e:
+            self.send_error(500, str(e))
+        finally:
             cursor.close()
-        if connection:
-            connection.close()
+            conn.close()
 
-@app.route('/api/taxconsultants', methods=['GET'])
-def get_tax_consultants():
+    def do_POST(self):
+        """Handle POST requests."""
+        cursor = None
+        conn = None
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data)
+
+            if self.path.startswith("/taxpayers/"):
+                taxpayer_id = data.get("TaxPayerID")
+                name = data.get("Name")
+                email = data.get("Email")
+                phone = data.get("Phone")
+                address = data.get("Address")
+                tin = data.get("TaxIdentificationNumber")
+
+                if not all([name, email, phone, address, tin]):
+                    self.send_error(400, "Missing required fields")
+                    return
+                
+                insert_query = """
+                    INSERT INTO TaxPayers (Name, Email, Phone, Address, TaxIdentificationNumber)
+                    VALUES (%s, %s, %s, %s, %s)
+                """
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(insert_query, (name, email, phone, address, tin))
+                conn.commit()
+
+            elif self.path.startswith("/taxrates/"):
+                income_bracket = data.get("IncomeBracket")
+                rate_percentage = data.get("RatePercentage")
+
+                if not all([income_bracket, rate_percentage]):
+                    self.send_error(400, "Missing required fields")
+                    return
+                
+                insert_query = """
+                    INSERT INTO TaxRates (IncomeBracket, RatePercentage)
+                    VALUES (%s, %s)
+                """
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(insert_query, (income_bracket, rate_percentage))
+                conn.commit()
+
+            elif self.path.startswith("/taxreturns/"):
+                taxpayer_id = data.get("TaxPayerID")
+                total_income = data.get("TotalIncome")
+                taxable_income = data.get("TaxableIncome")
+                tax_amount = data.get("TaxAmount")
+                status = data.get("Status")
+
+                if not all([taxpayer_id, total_income, taxable_income, tax_amount, status]):
+                    self.send_error(400, "Missing required fields")
+                    return
+                
+                insert_query = """
+                    INSERT INTO TaxReturns (TaxPayerID, TotalIncome, TaxableIncome, TaxAmount, Status)
+                    VALUES (%s, %s, %s, %s, %s)
+                """
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(insert_query, (taxpayer_id, total_income, taxable_income, tax_amount, status))
+                conn.commit()
+
+            # Add similar blocks for other tables such as Deductions, Penalties, TaxConsultants, etc.
+
+            self.send_response(201)  # Created
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+
+            response = {"message": "Data added successfully"}
+            self.wfile.write(json.dumps(response).encode())
+
+        except mysql.connector.Error as db_err:
+            self.send_error(500, f"Database error: {str(db_err)}")
+        except Exception as e:
+            self.send_error(500, f"Error: {str(e)}")
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
+def run(server_class=HTTPServer, handler_class=RequestHandler, port=8081):
+    """Run the HTTP server."""
+    
+    # Check if port is available before starting the server
     try:
-        connection = create_connection()
-        if connection is None:
-            return jsonify({"error": "Database connection failed"}), 500
-        
-        cursor = connection.cursor()
-        cursor.execute("SELECT ConsultantID, Name, Email, Phone, Expertise FROM TaxConsultants")
-        
-        consultants = [{'ConsultantID': row[0], 'Name': row[1], 'Email': row[2], 'Phone': row[3], 'Expertise': row[4]} for row in cursor.fetchall()]
-        cursor.close()
-        connection.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', port))
+            s.close()
+    except OSError as e:
+        print(f"Port {port} is already in use. Please try a different port.")
+        return
 
-        return jsonify({"consultants": consultants})
-    except oracledb.DatabaseError as e:
-        error_obj, = e.args
-        return jsonify({"error": error_obj.message}), 500
+    server_address = ("", port)
+    print(f"Server started at port {port}")
+    httpd = server_class(server_address, handler_class)
+    httpd.serve_forever()
 
-@app.route('/api/assignconsultant', methods=['POST'])
-def assign_tax_consultant():
-    data = request.get_json()
-    tax_payer_id = data.get('tax_payer_id')
-    consultant_id = data.get('consultant_id')
-
-    if not tax_payer_id or not consultant_id:
-        return jsonify({"error": "TaxPayerID and ConsultantID are required"}), 400
-
-    try:
-        connection = create_connection()
-        if connection is None:
-            return jsonify({"error": "Database connection failed"}), 500
-        
-        cursor = connection.cursor()
-
-        cursor.execute("""
-            INSERT INTO TaxConsultantAssignments (TaxPayerID, ConsultantID, AssignedDate, Status)
-            VALUES (:tax_payer_id, :consultant_id, SYSDATE, 'Active')
-        """, [tax_payer_id, consultant_id])
-        connection.commit()
-
-        return jsonify({"message": "Consultant assigned successfully"}), 201
-    except oracledb.DatabaseError as e:
-        error_obj, = e.args
-        return jsonify({"error": error_obj.message}), 500
-    finally:
-        if cursor:
-            cursor.close()
-        if connection:
-            connection.close()
-
-@app.route('/api/taxstatistics', methods=['GET'])
-def show_tax_statistics():
-    try:
-        connection = create_connection()
-        if connection is None:
-            return jsonify({"error": "Database connection failed"}), 500
-        
-        cursor = connection.cursor()
-        cursor.callproc("ShowTaxStatistics")
-
-        return jsonify({"message": "Tax statistics shown in DBMS Output"}), 200
-    except oracledb.DatabaseError as e:
-        error_obj, = e.args
-        return jsonify({"error": error_obj.message}), 500
-    finally:
-        if cursor:
-            cursor.close()
-        if connection:
-            connection.close()
-
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    run()
